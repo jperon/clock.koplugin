@@ -10,9 +10,10 @@ local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
 local logger = require("logger")
 
-local CLOCK_FACE_BB = RenderImage:renderImageFile("plugins/clock.koplugin/face.png")
-local HOURS_HAND_BB = RenderImage:renderImageFile("plugins/clock.koplugin/hours.png")
-local MINUTES_HAND_BB = RenderImage:renderImageFile("plugins/clock.koplugin/minutes.png")
+local PLUGIN_ROOT = package.path:match('([^;]*clock%.koplugin/)')
+local CLOCK_FACE_BB = RenderImage:renderImageFile(PLUGIN_ROOT .. "face.png")
+local HOURS_HAND_BB = RenderImage:renderImageFile(PLUGIN_ROOT .. "hours.png")
+local MINUTES_HAND_BB = RenderImage:renderImageFile(PLUGIN_ROOT .. "minutes.png")
 
 local function rotate_point(point_x, point_y, center_x, center_y, angle_rad)
     local sin, cos, floor = math.sin, math.cos, math.floor
