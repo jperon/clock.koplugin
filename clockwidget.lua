@@ -28,7 +28,7 @@ local function rotate_bb(bb, center_x, center_y, angle_rad)
     w, h = w - 1, h - 1
     for x = 0, w do
         for y = 0, h do
-            local old_x, old_y = rotate_point(x, y, center_x, center_y, -angle_rad)
+            local old_x, old_y = rotate_point(x, y, center_x, center_y, angle_rad)
             if old_x >= 0 and old_x <= w and old_y >= 0 and old_y <= h then
                 rot_bb:setPixel(x, y, bb:getPixel(old_x, old_y))
             end
@@ -79,29 +79,31 @@ function ClockWidget:_prepare_hands(hours, minutes)
     local idx = hours * 60 + minutes
     if self._hands[idx] then return end
     self._hands[idx] = {}
-    local hour_rad, minute_rad = math.pi / 6, math.pi / 30
+    local hour_rad, minute_rad = -math.pi / 6, -math.pi / 30
     local padding = self.padding
     local width, height = self.width - 2 * padding, self.height - 2 * padding
 
+    local hours_hand_bb = rotate_bb(
+        HOURS_HAND_BB,
+        HOURS_HAND_BB:getWidth() / 2,
+        HOURS_HAND_BB:getHeight() / 2,
+        (hours + minutes/60) * hour_rad
+    )
+    local minutes_hand_bb = rotate_bb(
+        MINUTES_HAND_BB,
+        MINUTES_HAND_BB:getWidth() / 2,
+        MINUTES_HAND_BB:getHeight() / 2,
+        minutes * minute_rad
+    )
     local hours_hand_widget = ImageWidget:new{
-        image = rotate_bb(
-            HOURS_HAND_BB,
-            HOURS_HAND_BB:getWidth() / 2,
-            HOURS_HAND_BB:getHeight() / 2,
-            (hours + minutes/60) * hour_rad
-        ),
+        image = hours_hand_bb,
         width = width,
         height = height,
         scale_factor = self.scale_factor,
         alpha = true,
     }
     local minutes_hand_widget = ImageWidget:new{
-        image = rotate_bb(
-            MINUTES_HAND_BB,
-            MINUTES_HAND_BB:getWidth() / 2,
-            MINUTES_HAND_BB:getHeight() / 2,
-            minutes * minute_rad
-        ),
+        image = minutes_hand_bb,
         width = width,
         height = height,
         scale_factor = self.scale_factor,
@@ -115,6 +117,10 @@ function ClockWidget:_prepare_hands(hours, minutes)
     self._hands[idx].minutes = CenterContainer:new{
         dimen = self:getSize(),
         minutes_hand_widget,
+    }
+    self._hands[idx].bbs = {
+        hours_hand_bb,
+        minutes_hand_bb,
     }
     local n_hands = 0
     for _ in pairs(self._hands) do n_hands = n_hands + 1 end
@@ -140,7 +146,9 @@ function ClockWidget:_updateHands()
         local idx = hours * 60 + minutes
         for k in pairs(self._hands) do
             if (idx < 24 * 60 - 2) and (k - idx < 0) or (k - idx > 2) then
+                local hand = self._hands[k]
                 self._hands[k] = nil
+                for _, bb in ipairs(hand.bbs) do bb:free() end
             end
         end
     end)
@@ -148,6 +156,7 @@ end
 
 function ClockWidget:onShow()
     self:_updateHands()
+    UIManager:setDirty(nil, "full")
     self:setupAutoRefreshTime()
 end
 
