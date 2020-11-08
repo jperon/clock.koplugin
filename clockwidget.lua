@@ -48,6 +48,7 @@ local ClockWidget = WidgetContainer:new{
 function ClockWidget:init()
     local padding = self.padding
     local width, height = self.width - 2 * padding, self.height - 2 * padding
+    self._orig_screen_mode = Screen:getScreenMode()
 
     self.face = CenterContainer:new{
         dimen = self:getSize(),
@@ -68,6 +69,9 @@ function ClockWidget:paintTo(bb, x, y)
     local size = self:getSize()
     x = x + self.width / 2
     y = y + self.height / 2
+    if Screen:getScreenMode() ~= self._orig_screen_mode then
+        x, y = y, x
+    end
     self.face:paintTo(bb, x, y)
     hands.hours:paintTo(bb, x, y)
     hands.minutes:paintTo(bb, x, y)
