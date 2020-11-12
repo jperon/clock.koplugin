@@ -18,8 +18,9 @@ local Clock = InputContainer:new{
     width = Screen:getWidth(),
     height = Screen:getHeight(),
     scale_factor = 0,
-    dismiss_callback = function()
+    dismiss_callback = function(self)
         PluginShare.pause_auto_suspend = false
+        self._was_suspending = false
     end,
 }
 
@@ -83,14 +84,28 @@ function Clock:onShow()
     return true
 end
 
+function Clock:onSuspend()
+    if G_reader_settings:readSetting("clock_on_suspend") and not self._was_suspending then
+        UIManager:show(self)
+        self._was_suspending = true
+    end
+end
+
+function Clock:onResume()
+    if self._was_suspending then
+        self:onShow()
+    end
+    self._was_suspending = false
+end
+
 function Clock:onAnyKeyPressed()
     -- triggered by our defined key events
-    self.dismiss_callback()
+    self:dismiss_callback()
     UIManager:close(self)
 end
 
 function Clock:onTapClose()
-    self.dismiss_callback()
+    self:dismiss_callback()
     UIManager:close(self)
 end
 

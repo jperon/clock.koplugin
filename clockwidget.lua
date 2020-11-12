@@ -138,22 +138,18 @@ function ClockWidget:_updateHands()
     local floor, fmod = math.floor, math.fmod
     --  We prepare this minute's hands at once (if necessary).
     self:_prepare_hands(hours, minutes)
-    --  Then we schedule preparation of next two minutes' hands.
-    for i = 1, 2 do
-        local fut_minutes, fut_hours
-        fut_minutes = minutes + i
-        fut_hours = fmod(hours + floor(fut_minutes / 60), 24)
-        fut_minutes = fmod(fut_minutes, 60)
-        UIManager:scheduleIn(i * 10, function() self:_prepare_hands(fut_hours, fut_minutes) end)
-    end
+    --  Then we schedule preparation of next minute's hands.
+    local fut_minutes, fut_hours
+    fut_minutes = minutes + 1
+    fut_hours = fmod(hours + floor(fut_minutes / 60), 24)
+    fut_minutes = fmod(fut_minutes, 60)
+    UIManager:scheduleIn(2, function() self:_prepare_hands(fut_hours, fut_minutes) end)
     --  Then we schedule removing of past minutes' hands.
     UIManager:scheduleIn(30, function()
         local idx = hours * 60 + minutes
         for k in pairs(self._hands) do
             if (idx < 24 * 60 - 2) and (k - idx < 0) or (k - idx > 2) then
-                local hand = self._hands[k]
                 self._hands[k] = nil
-                for _, bb in ipairs(hand.bbs) do bb:free() end
             end
         end
     end)
