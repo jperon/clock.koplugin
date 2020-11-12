@@ -11,9 +11,6 @@ local _ = require("gettext")
 local logger = require("logger")
 
 local PLUGIN_ROOT = package.path:match('([^;]*clock%.koplugin/)')
-local CLOCK_FACE_BB = RenderImage:renderImageFile(PLUGIN_ROOT .. "face.png")
-local HOURS_HAND_BB = RenderImage:renderImageFile(PLUGIN_ROOT .. "hours.png")
-local MINUTES_HAND_BB = RenderImage:renderImageFile(PLUGIN_ROOT .. "minutes.png")
 
 local function rotate_point(point_x, point_y, center_x, center_y, angle_rad)
     local sin, cos, floor = math.sin, math.cos, math.floor
@@ -53,13 +50,15 @@ function ClockWidget:init()
     self.face = CenterContainer:new{
         dimen = self:getSize(),
         ImageWidget:new{
-            image = CLOCK_FACE_BB,
+            file = PLUGIN_ROOT .. "face.png",
             width = width,
             height = height,
             scale_factor = self.scale_factor,
             alpha = true
-        },
+        }
     }
+    self._hours_hand_bb = RenderImage:renderImageFile(PLUGIN_ROOT .. "hours.png")
+    self._minutes_hand_bb = RenderImage:renderImageFile(PLUGIN_ROOT .. "minutes.png")
     self:_updateHands()
 end
 
@@ -89,15 +88,15 @@ function ClockWidget:_prepare_hands(hours, minutes)
     local width, height = self.width - 2 * padding, self.height - 2 * padding
 
     local hours_hand_bb = rotate_bb(
-        HOURS_HAND_BB,
-        HOURS_HAND_BB:getWidth() / 2,
-        HOURS_HAND_BB:getHeight() / 2,
+        self._hours_hand_bb,
+        self._hours_hand_bb:getWidth() / 2,
+        self._hours_hand_bb:getHeight() / 2,
         (hours + minutes/60) * hour_rad
     )
     local minutes_hand_bb = rotate_bb(
-        MINUTES_HAND_BB,
-        MINUTES_HAND_BB:getWidth() / 2,
-        MINUTES_HAND_BB:getHeight() / 2,
+        self._minutes_hand_bb,
+        self._minutes_hand_bb:getWidth() / 2,
+        self._minutes_hand_bb:getHeight() / 2,
         minutes * minute_rad
     )
     local hours_hand_widget = ImageWidget:new{
