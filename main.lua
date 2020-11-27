@@ -1,5 +1,6 @@
 local ClockWidget = require("clockwidget")
 local Device = require("device")
+local Dispatcher = require("dispatcher")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local InputContainer = require("ui/widget/container/inputcontainer")
@@ -53,6 +54,7 @@ function Clock:init()
         padding = padding
     }
     self.ui.menu:registerToMainMenu(self)
+    self:onDispatcherRegisterAction()
 end
 
 function Clock:addToMainMenu(menu_items)
@@ -107,6 +109,19 @@ end
 function Clock:onTapClose()
     self:dismiss_callback()
     UIManager:close(self)
+end
+
+function Clock:onClockShow()
+    UIManager:show(self)
+end
+
+function Clock:onDispatcherRegisterAction()
+    Dispatcher:registerAction("clock_show", {
+        category = "none",
+        event = "ClockShow",
+        title = _("Show clock"),
+        device = true,
+    })
 end
 
 return Clock
