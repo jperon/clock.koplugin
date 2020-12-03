@@ -38,51 +38,51 @@ ClockWidget = WidgetContainer\new
     scale_factor: 0
 
 ClockWidget.init = =>
-    padding = self.padding
-    width, height = self.width - 2 * padding, self.height - 2 * padding
-    self._orig_screen_mode = Screen\getScreenMode!
+    padding = @padding
+    width, height = @width - 2 * padding, @height - 2 * padding
+    @_orig_screen_mode = Screen\getScreenMode!
 
-    self.face = CenterContainer\new{
-        dimen: self\getSize!,
+    @face = CenterContainer\new{
+        dimen: @getSize!,
         ImageWidget\new
             file: PLUGIN_ROOT .. "face.png",
             :width, :height,
-            scale_factor: self.scale_factor,
+            scale_factor: @scale_factor,
             alpha: true
     }
-    self._hours_hand_bb = RenderImage\renderImageFile "#{PLUGIN_ROOT}hours.png"
-    self._minutes_hand_bb = RenderImage\renderImageFile "#{PLUGIN_ROOT}minutes.png"
-    self\_updateHands!
+    @_hours_hand_bb = RenderImage\renderImageFile "#{PLUGIN_ROOT}hours.png"
+    @_minutes_hand_bb = RenderImage\renderImageFile "#{PLUGIN_ROOT}minutes.png"
+    @_updateHands!
 
 ClockWidget.paintTo = (bb, x, y) =>
-    hands = self._hands[60 * tonumber(date "%H") + tonumber(date "%M")]
+    hands = @_hands[60 * tonumber(date "%H") + tonumber(date "%M")]
     bb\fill Blitbuffer.COLOR_WHITE
-    size = self\getSize!
-    x, y = x + self.width / 2, y + self.height / 2
-    x, y = y, x if Screen\getScreenMode! ~= self._orig_screen_mode
-    self.face\paintTo bb, x, y
+    size = @getSize!
+    x, y = x + @width / 2, y + @height / 2
+    x, y = y, x if Screen\getScreenMode! ~= @_orig_screen_mode
+    @face\paintTo bb, x, y
     hands.hours\paintTo bb, x, y
     hands.minutes\paintTo bb, x, y
     bb\invertRect x, y, size.w, size.h if Screen.night_mode
 
 ClockWidget._prepare_hands = (hours, minutes) =>
     idx = hours * 60 + minutes
-    return if self._hands[idx]
-    self._hands[idx] = {}
+    return if @_hands[idx]
+    @_hands[idx] = {}
     hour_rad, minute_rad = -math.pi / 6, -math.pi / 30
-    padding = self.padding
-    width, height = self.width - 2 * padding, self.height - 2 * padding
+    padding = @padding
+    width, height = @width - 2 * padding, @height - 2 * padding
 
     hours_hand_bb = rotate_bb(
-        self._hours_hand_bb,
-        self._hours_hand_bb\getWidth! / 2,
-        self._hours_hand_bb\getHeight! / 2,
+        @_hours_hand_bb,
+        @_hours_hand_bb\getWidth! / 2,
+        @_hours_hand_bb\getHeight! / 2,
         (hours + minutes/60) * hour_rad
     )
     minutes_hand_bb = rotate_bb(
-        self._minutes_hand_bb,
-        self._minutes_hand_bb\getWidth! / 2,
-        self._minutes_hand_bb\getHeight! / 2,
+        @_minutes_hand_bb,
+        @_minutes_hand_bb\getWidth! / 2,
+        @_minutes_hand_bb\getHeight! / 2,
         minutes * minute_rad
     )
 
@@ -90,59 +90,59 @@ ClockWidget._prepare_hands = (hours, minutes) =>
         image: hours_hand_bb,
         width: width,
         height: height,
-        scale_factor: self.scale_factor,
+        scale_factor: @scale_factor,
         alpha: true,
     minutes_hand_widget = ImageWidget\new
         image: minutes_hand_bb,
         width: width,
         height: height,
-        scale_factor: self.scale_factor,
+        scale_factor: @scale_factor,
         alpha: true,
 
-    self._hands[idx].hours = CenterContainer\new{
-        dimen: self\getSize!,
+    @_hands[idx].hours = CenterContainer\new{
+        dimen: @getSize!,
         hours_hand_widget,
     }
-    self._hands[idx].minutes = CenterContainer\new{
-        dimen: self\getSize!,
+    @_hands[idx].minutes = CenterContainer\new{
+        dimen: @getSize!,
         minutes_hand_widget,
     }
-    self._hands[idx].bbs = {hours_hand_bb, minutes_hand_bb}
+    @_hands[idx].bbs = {hours_hand_bb, minutes_hand_bb}
     n_hands = 0
-    n_hands += 1 for __ in pairs self._hands
+    n_hands += 1 for __ in pairs @_hands
     logger.dbg "ClockWidget: hands ready for", hours, minutes, ":", n_hands, "position(s) in memory."
 
 ClockWidget._updateHands = =>
-    self._hands = self._hands or {}
+    @_hands = @_hands or {}
     hours, minutes = tonumber(date "%H"), tonumber(date "%M")
     {:floor, :fmod} = math
     --  We prepare this minute's hands at once (if necessary).
-    self\_prepare_hands hours, minutes
+    @_prepare_hands hours, minutes
     --  Then we schedule preparation of next minute's hands.
     fut_minutes = minutes + 1
     fut_hours = fmod hours + floor(fut_minutes / 60), 24
     fut_minutes = fmod fut_minutes, 60
-    UIManager\scheduleIn 2, -> self\_prepare_hands fut_hours, fut_minutes
+    UIManager\scheduleIn 2, -> @_prepare_hands fut_hours, fut_minutes
     --  Then we schedule removing of past minutes' hands.
     UIManager\scheduleIn 30, ->
         idx = hours * 60 + minutes
-        for k in pairs self._hands
-            self._hands[k] = nil if (idx < 24 * 60 - 2) and (k - idx < 0) or (k - idx > 2)
+        for k in pairs @_hands
+            @_hands[k] = nil if (idx < 24 * 60 - 2) and (k - idx < 0) or (k - idx > 2)
 
 ClockWidget.onShow = =>
-    self\_updateHands!
+    @_updateHands!
     UIManager\setDirty nil, "full"
-    self\setupAutoRefreshTime!
+    @setupAutoRefreshTime!
 
 ClockWidget.setupAutoRefreshTime = =>
-    if not self.autoRefreshTime
-        self.autoRefreshTime = ->
-            UIManager\setDirty "all", -> "ui", self.dimen, true
-            self\_updateHands!
-            UIManager\scheduleIn 60 - tonumber(date "%S"), self.autoRefreshTime
-    self.onCloseWidget = -> UIManager\unschedule self.autoRefreshTime
-    self.onSuspend = -> UIManager\unschedule self.autoRefreshTime
-    self.onResume = self.autoRefreshTime
-    UIManager\scheduleIn 60 - tonumber(date "%S"), self.autoRefreshTime
+    if not @autoRefreshTime
+        @autoRefreshTime = ->
+            UIManager\setDirty "all", -> "ui", @dimen, true
+            @_updateHands!
+            UIManager\scheduleIn 60 - tonumber(date "%S"), @autoRefreshTime
+    @onCloseWidget = -> UIManager\unschedule @autoRefreshTime
+    @onSuspend = -> UIManager\unschedule @autoRefreshTime
+    @onResume = @autoRefreshTime
+    UIManager\scheduleIn 60 - tonumber(date "%S"), @autoRefreshTime
 
 return ClockWidget
