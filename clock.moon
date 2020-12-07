@@ -1,4 +1,3 @@
-ClockWidget = require("clockwidget")
 Device = require("device")
 Dispatcher = require("dispatcher")
 Geom = require("ui/geometry")
@@ -10,6 +9,7 @@ Input = Device.input
 Screen = Device.screen
 Size = require("ui/size")
 _ = require("gettext")
+ClockWidget = require("clockwidget")
 
 
 Clock = InputContainer\new
@@ -48,10 +48,8 @@ Clock.onCloseWidget = =>
 
 Clock.onShow = =>
     -- triggered by the UIManager after we got successfully shown (not yet painted)
-    UIManager\setDirty @, -> "ui", @[1].dimen
     UIManager\scheduleIn(@timeout, -> UIManager\close @) if @timeout
     PluginShare.pause_auto_suspend = true
-    return true
 
 Clock.onSuspend = =>
     if G_reader_settings\readSetting("clock_on_suspend") and not @_was_suspending
