@@ -44,7 +44,6 @@ Clock.addToMainMenu = (menu_items) =>
 
 Clock.onCloseWidget = =>
     UIManager\setDirty nil, -> "ui", @[1].dimen
-    true
 
 Clock.onShow = =>
     -- triggered by the UIManager after we got successfully shown (not yet painted)
