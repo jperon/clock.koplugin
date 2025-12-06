@@ -12,8 +12,8 @@ _ = require("gettext")
 ClockWidget = require("clockwidget")
 
 
-Clock = InputContainer\new
-    name: "clock",
+AnalogClock = InputContainer\new
+    name: "analogclock",
     is_doc_only: false,
     modal: true,
     width: Screen\getWidth!,
@@ -23,7 +23,7 @@ Clock = InputContainer\new
         PluginShare.pause_auto_suspend = false
         @_was_suspending = false
 
-Clock.init = =>
+AnalogClock.init = =>
     @key_events = AnyKeyPressed: { {Input.group.Any}, seqtext: "any key", doc: "close dialog" } if Device\hasKeys!
     @ges_events.TapClose = {GestureRange\new
         ges: "tap",
@@ -39,42 +39,42 @@ Clock.init = =>
     @ui.menu\registerToMainMenu @
     @onDispatcherRegisterAction!
 
-Clock.addToMainMenu = (menu_items) =>
-    menu_items.clock = {text: _("Clock"), sorting_hint: "more_tools", callback: -> UIManager\show @}
+AnalogClock.addToMainMenu = (menu_items) =>
+    menu_items.analogclock = {text: _("Analog Clock"), sorting_hint: "more_tools", callback: -> UIManager\show @}
 
-Clock.onCloseWidget = =>
+AnalogClock.onCloseWidget = =>
     UIManager\setDirty nil, -> "ui", @[1].dimen
 
-Clock.onShow = =>
+AnalogClock.onShow = =>
     -- triggered by the UIManager after we got successfully shown (not yet painted)
     UIManager\scheduleIn(@timeout, -> UIManager\close @) if @timeout
     PluginShare.pause_auto_suspend = true
 
-Clock.onSuspend = =>
-    if G_reader_settings\readSetting("clock_on_suspend") and not @_was_suspending
+AnalogClock.onSuspend = =>
+    if G_reader_settings\readSetting("analogclock_on_suspend") and not @_was_suspending
         UIManager\show @
         @_was_suspending = true
 
-Clock.onResume = =>
+AnalogClock.onResume = =>
     @onShow! if @_was_suspending
     @_was_suspending = false
 
-Clock.onAnyKeyPressed = =>
+AnalogClock.onAnyKeyPressed = =>
     @dismiss_callback!
     UIManager\close @
 
-Clock.onTapClose = =>
+AnalogClock.onTapClose = =>
     @dismiss_callback!
     UIManager\close @
 
-Clock.onClockShow = => UIManager\show @
+AnalogClock.onClockShow = => UIManager\show @
 
-Clock.onDispatcherRegisterAction = =>
-    Dispatcher\registerAction("clock_show", {
+AnalogClock.onDispatcherRegisterAction = =>
+    Dispatcher\registerAction("analogclock_show", {
         category: "none",
-        event: "ClockShow",
-        title: _("Show clock"),
+        event: "AnalogClockShow",
+        title: _("Show analog clock"),
         device: true,
     })
 
-return Clock
+return AnalogClock
