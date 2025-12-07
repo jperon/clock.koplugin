@@ -16,8 +16,8 @@ AnalogClock = InputContainer\new
     name: "analogclock",
     is_doc_only: false,
     modal: true,
-    width: Screen\getWidth!,
-    height: Screen\getHeight!,
+    is_doc_only: false,
+    modal: true,
     scale_factor: 0,
     dismiss_callback: =>
         PluginShare.pause_auto_suspend = false
@@ -32,12 +32,21 @@ AnalogClock.init = =>
             w: Screen\getWidth!,
             h: Screen\getHeight!,} if Device\isTouchDevice!
 
-    {:width, :height} = @
+    @width = Screen\getWidth!
+    @height = Screen\getHeight!
     padding = Size.padding.fullscreen
 
-    @[1] = ClockWidget\new :width, :height, :padding
+    @[1] = ClockWidget\new width: @width, height: @height, :padding
     @ui.menu\registerToMainMenu @
     @onDispatcherRegisterAction!
+
+AnalogClock.onResize = =>
+    @width = Screen\getWidth!
+    @height = Screen\getHeight!
+    @ges_events.TapClose[1].range.w = @width
+    @ges_events.TapClose[1].range.h = @height
+    @[1]\updateDimen @width, @height
+    UIManager\setDirty nil, -> "ui", @[1].dimen
 
 AnalogClock.addToMainMenu = (menu_items) =>
     menu_items.analogclock = {text: _("Analog Clock"), sorting_hint: "more_tools", callback: -> UIManager\show @}
@@ -46,6 +55,16 @@ AnalogClock.onCloseWidget = =>
     UIManager\setDirty nil, -> "ui", @[1].dimen
 
 AnalogClock.onShow = =>
+    -- Update dimensions in case rotation happened while hidden
+    @width = Screen\getWidth!
+    @height = Screen\getHeight!
+    @dimen = Geom\new{w: @width, h: @height}
+    if @ges_events.TapClose
+        @ges_events.TapClose[1].range.w = @width
+        @ges_events.TapClose[1].range.h = @height
+    @[1]\updateDimen @width, @height
+    UIManager\setDirty nil, -> "ui", @[1].dimen
+
     -- triggered by the UIManager after we got successfully shown (not yet painted)
     UIManager\scheduleIn(@timeout, -> UIManager\close @) if @timeout
     PluginShare.pause_auto_suspend = true
@@ -67,7 +86,7 @@ AnalogClock.onTapClose = =>
     @dismiss_callback!
     UIManager\close @
 
-AnalogClock.onClockShow = => UIManager\show @
+AnalogClock.onAnalogClockShow = => UIManager\show @
 
 AnalogClock.onDispatcherRegisterAction = =>
     Dispatcher\registerAction("analogclock_show", {
