@@ -1,34 +1,29 @@
 local Blitbuffer = require("ffi/blitbuffer")
+local DataStorage = require("datastorage")
 local Device = require("device")
 local Geom = require("ui/geometry")
+local lfs = require("libs/libkoreader-lfs")
 local UIManager = require("ui/uimanager")
 local Screen = Device.screen
 local Size = require("ui/size")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local _ = require("gettext")
 local logger = require("logger")
+local util = require("util")
 local date
 date = os.date
-local rotate_point
-rotate_point = function(point_x, point_y, center_x, center_y, angle_rad)
-  local sin, cos, floor
-  do
-    local _obj_0 = math
-    sin, cos, floor = _obj_0.sin, _obj_0.cos, _obj_0.floor
-  end
-  local s, c = sin(angle_rad), cos(angle_rad)
-  local x, y = (point_x - center_x), (point_y - center_y)
-  local new_x, new_y = (x * c - y * s), (x * s + y * c)
-  return floor(center_x + new_x + 0.5), floor(center_y + new_y + 0.5)
-end
+local CACHE_DIR = DataStorage:getDataDir() .. "/cache/analogclock"
 local rotate_bb
 rotate_bb = function(bb, center_x, center_y, angle_rad)
   local w, h = bb:getWidth(), bb:getHeight()
   local rot_bb = Blitbuffer.new(w, h, bb:getType())
   w, h = w - 1, h - 1
+  local s, c = math.sin(angle_rad), math.cos(angle_rad)
   for x = 0, w do
     for y = 0, h do
-      local old_x, old_y = rotate_point(x, y, center_x, center_y, angle_rad)
+      local rel_x, rel_y = x - center_x, y - center_y
+      local old_x = math.floor(center_x + (rel_x * c - rel_y * s) + 0.5)
+      local old_y = math.floor(center_y + (rel_x * s + rel_y * c) + 0.5)
       if old_x >= 0 and old_x <= w and old_y >= 0 and old_y <= h then
         rot_bb:setPixel(x, y, bb:getPixel(old_x, old_y))
       end
@@ -45,8 +40,8 @@ local draw_minute_tick
 draw_minute_tick = function(size, is_hour)
   local bb = Blitbuffer.new(size, size, Screen.bb:getType())
   local center = size / 2
-  local tick_length = is_hour and size / 12 or size / 24
-  local tick_width = is_hour and size / 50 or size / 100
+  local tick_length = is_hour and size / 16 or size / 24
+  local tick_width = is_hour and size / 66 or size / 100
   local x = math.floor(center - tick_width / 2)
   local y = math.floor(size * 0.05)
   local w = math.floor(tick_width)
@@ -85,6 +80,7 @@ draw_quarter = function(size)
 end
 local draw_face
 draw_face = function(size)
+  local t0 = os.clock()
   local bb_q = draw_quarter(size)
   local bb_cadran = Blitbuffer.new(size, size, Screen.bb:getType())
   for i = 0, 3 do
@@ -95,12 +91,15 @@ draw_face = function(size)
   bb_q:free()
   bb_cadran:invert()
   local center = math.floor(size / 2)
-  local radius = math.floor(size / 18)
+  local radius = math.floor(size / 20)
   bb_cadran:paintCircle(center, center, radius, Blitbuffer.COLOR_BLACK)
+  local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+  logger.dbg("ClockWidget: draw_face completed in", elapsed, "ms")
   return bb_cadran
 end
 local draw_hand
 draw_hand = function(size, length_ratio, base_width_ratio, tip_width_ratio)
+  local t0 = os.clock()
   local bb = Blitbuffer.new(size, size, Screen.bb:getType())
   local center = size / 2
   local hand_length = size * length_ratio
@@ -116,15 +115,55 @@ draw_hand = function(size, length_ratio, base_width_ratio, tip_width_ratio)
   end
   local radius = math.floor(tip_w / 2)
   bb:paintCircle(math.floor(center), math.floor(y_tip), radius, Blitbuffer.COLOR_BLACK)
+  local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+  logger.dbg("ClockWidget: draw_hand completed in", elapsed, "ms")
   return bb
 end
 local draw_hours_hand
 draw_hours_hand = function(size)
-  return draw_hand(size, 0.22, 1 / 18, 1 / 32)
+  return draw_hand(size, 0.25, 1 / 18, 1 / 32)
 end
 local draw_minutes_hand
 draw_minutes_hand = function(size)
-  return draw_hand(size, 0.32, 1 / 18, 1 / 32)
+  return draw_hand(size, 0.35, 1 / 18, 1 / 32)
+end
+local get_dial_cache_path
+get_dial_cache_path = function(size)
+  return tostring(CACHE_DIR) .. "/dial_" .. tostring(size) .. ".png"
+end
+local ensure_cache_dir
+ensure_cache_dir = function()
+  return util.makePath(CACHE_DIR)
+end
+local save_dial_to_cache
+save_dial_to_cache = function(bb, size)
+  ensure_cache_dir()
+  local path = get_dial_cache_path(size)
+  local bb_white = Blitbuffer.new(size, size)
+  bb_white:fill(Blitbuffer.COLOR_WHITE)
+  bb_white:blitFrom(bb, 0, 0, 0, 0, size, size)
+  bb_white:writePNG(path)
+  bb_white:free()
+  return logger.dbg("ClockWidget: Saved dial to cache (BB8, no alpha):", path)
+end
+local load_dial_from_cache
+load_dial_from_cache = function(size)
+  local path = get_dial_cache_path(size)
+  local attr = lfs.attributes(path)
+  if not (attr) then
+    return nil
+  end
+  local RenderImage = require("ui/renderimage")
+  local bb = RenderImage:renderImageFile(path, false, size, size)
+  if bb then
+    logger.dbg("ClockWidget: Loaded dial from cache:", path, "size:", bb:getWidth(), "x", bb:getHeight())
+    if bb:getWidth() ~= size or bb:getHeight() ~= size then
+      logger.dbg("ClockWidget: Cache size mismatch, expected", size)
+      bb:free()
+      return nil
+    end
+  end
+  return bb
 end
 local ClockWidget = WidgetContainer:new({
   padding = Size.padding.large,
@@ -169,27 +208,51 @@ ClockWidget._ensureBaseImages = function(self)
   if self._face_bb and self._hours_hand_bb and self._minutes_hand_bb then
     return 
   end
+  local t_start = os.clock()
   logger.dbg("ClockWidget: Ensuring base images for size", self.face_dim)
   if not self._face_bb then
-    logger.dbg("ClockWidget: Drawing procedural face at size", self.face_dim)
-    self._face_bb = draw_face(self.face_dim)
+    local t0 = os.clock()
+    self._face_bb = load_dial_from_cache(self.face_dim)
+    if self._face_bb then
+      local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+      logger.dbg("ClockWidget: _ensureBaseImages face loaded from cache in", elapsed, "ms")
+    else
+      logger.dbg("ClockWidget: Drawing procedural face at size", self.face_dim)
+      self._face_bb = draw_face(self.face_dim)
+      local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+      logger.dbg("ClockWidget: _ensureBaseImages face creation took", elapsed, "ms")
+      save_dial_to_cache(self._face_bb, self.face_dim)
+    end
   end
   if not self._hours_hand_bb then
+    local t0 = os.clock()
     logger.dbg("ClockWidget: Drawing procedural hours hand")
     self._hours_hand_bb = draw_hours_hand(self.face_dim)
+    local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+    logger.dbg("ClockWidget: _ensureBaseImages hours hand creation took", elapsed, "ms")
   end
   if not self._minutes_hand_bb then
+    local t0 = os.clock()
     logger.dbg("ClockWidget: Drawing procedural minutes hand")
     self._minutes_hand_bb = draw_minutes_hand(self.face_dim)
+    local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+    logger.dbg("ClockWidget: _ensureBaseImages minutes hand creation took", elapsed, "ms")
   end
   if not (self._face_bb and self._hours_hand_bb and self._minutes_hand_bb) then
     return logger.err("ClockWidget: Failed to create base images!")
+  else
+    local total_elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
+    return logger.dbg("ClockWidget: _ensureBaseImages total time:", total_elapsed, "ms")
   end
 end
 ClockWidget.paintTo = function(self, bb, x, y)
+  local t_start = os.clock()
   self:_ensureBaseImages()
   local h, m = tonumber(date("%H")), tonumber(date("%M"))
+  local t0 = os.clock()
   local hands = self._hands[60 * h + m] or self:_updateHands(h, m)
+  local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+  logger.dbg("ClockWidget: paintTo updateHands took", elapsed, "ms")
   self._screen_bb:fill(Blitbuffer.COLOR_WHITE)
   local cx = math.floor((self.width - self.face_dim) / 2)
   local cy = math.floor((self.height - self.face_dim) / 2)
@@ -209,28 +272,37 @@ ClockWidget.paintTo = function(self, bb, x, y)
     local mcy = cy + math.floor((self.face_dim - mbb_h) / 2)
     self._screen_bb:pmulalphablitFrom(hands.minutes_bb, mcx, mcy, 0, 0, mbb_w, mbb_h)
   end
-  return bb:blitFrom(self._screen_bb, x, y, 0, 0, self.width, self.height)
+  bb:blitFrom(self._screen_bb, x, y, 0, 0, self.width, self.height)
+  local total_elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
+  return logger.dbg("ClockWidget: paintTo total time:", total_elapsed, "ms")
 end
 ClockWidget._prepareHands = function(self, hours, minutes)
   local idx = hours * 60 + minutes
   if self._hands[idx] then
     return self._hands[idx]
   end
+  local t_start = os.clock()
   self:_ensureBaseImages()
   if not (self._hours_hand_bb and self._minutes_hand_bb) then
     return { }
   end
   self._hands[idx] = { }
   local hour_rad, minute_rad = -math.pi / 6, -math.pi / 30
+  local t0 = os.clock()
   local hours_hand_bb = rotate_bb(self._hours_hand_bb, self._hours_hand_bb:getWidth() / 2, self._hours_hand_bb:getHeight() / 2, (hours + minutes / 60) * hour_rad)
+  local elapsed_h = math.floor((os.clock() - t0) * 1000 + 0.5)
+  t0 = os.clock()
   local minutes_hand_bb = rotate_bb(self._minutes_hand_bb, self._minutes_hand_bb:getWidth() / 2, self._minutes_hand_bb:getHeight() / 2, minutes * minute_rad)
+  local elapsed_m = math.floor((os.clock() - t0) * 1000 + 0.5)
   self._hands[idx].hours_bb = hours_hand_bb
   self._hands[idx].minutes_bb = minutes_hand_bb
   local n_hands = 0
   for __ in pairs(self._hands) do
     n_hands = n_hands + 1
   end
-  logger.dbg("ClockWidget: hands ready for", hours, minutes, ":", n_hands, "position(s) in memory.")
+  local total_elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
+  logger.dbg("ClockWidget: _prepareHands for", hours, minutes, ": hours_rotate", elapsed_h, "ms, minutes_rotate", elapsed_m, "ms, total", total_elapsed, "ms")
+  logger.dbg("ClockWidget: hands ready:", n_hands, "position(s) in memory.")
   return self._hands[idx]
 end
 ClockWidget._updateHands = function(self)
@@ -240,6 +312,8 @@ ClockWidget._updateHands = function(self)
     local _obj_0 = math
     floor, fmod = _obj_0.floor, _obj_0.fmod
   end
+  local t_start = os.clock()
+  logger.dbg("ClockWidget: _updateHands starting for", hours, ":", minutes)
   UIManager:scheduleIn(50, function()
     local idx = hours * 60 + minutes
     for k in pairs(self._hands) do
@@ -252,7 +326,10 @@ ClockWidget._updateHands = function(self)
     fut_minutes = fmod(fut_minutes, 60)
     return self:_prepareHands(fut_hours, fut_minutes)
   end)
-  return self:_prepareHands(hours, minutes)
+  local result = self:_prepareHands(hours, minutes)
+  local elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
+  logger.dbg("ClockWidget: _updateHands completed in", elapsed, "ms")
+  return result
 end
 ClockWidget.onShow = function(self)
   return self:autoRefreshTime()

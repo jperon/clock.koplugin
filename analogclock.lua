@@ -55,7 +55,6 @@ AnalogClock.init = function(self)
     height = self.height,
     padding = padding
   })
-  self.ui.menu:registerToMainMenu(self)
   return self:onDispatcherRegisterAction()
 end
 AnalogClock.onResize = function(self)
@@ -104,12 +103,7 @@ AnalogClock.onShow = function(self)
   end
   PluginShare.pause_auto_suspend = true
 end
-AnalogClock.onSuspend = function(self)
-  if G_reader_settings:readSetting("analogclock_on_suspend") and not self._was_suspending then
-    UIManager:show(self)
-    self._was_suspending = true
-  end
-end
+AnalogClock.onSuspend = function(self) end
 AnalogClock.onResume = function(self)
   if self._was_suspending then
     self:onShow()
