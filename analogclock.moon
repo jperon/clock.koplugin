@@ -37,6 +37,7 @@ AnalogClock.init = =>
     padding = Size.padding.fullscreen
 
     @[1] = ClockWidget\new width: @width, height: @height, :padding
+    @ui.menu\registerToMainMenu @
     @onDispatcherRegisterAction!
 
 AnalogClock.onResize = =>
@@ -48,7 +49,7 @@ AnalogClock.onResize = =>
     UIManager\setDirty nil, -> "ui", @[1].dimen
 
 AnalogClock.addToMainMenu = (menu_items) =>
-    menu_items.analogclock = {text: _("Analog Clock"), sorting_hint: "more_tools", callback: -> UIManager\show @}
+    menu_items.analogclock = text: _("Analog Clock"), sorting_hint: "more_tools", callback: -> UIManager\show @
 
 AnalogClock.onCloseWidget = =>
     UIManager\setDirty nil, -> "ui", @[1].dimen
@@ -69,6 +70,9 @@ AnalogClock.onShow = =>
     PluginShare.pause_auto_suspend = true
 
 AnalogClock.onSuspend = =>
+    if G_reader_settings\readSetting("analogclock_on_suspend") and not @_was_suspending
+        UIManager\show @
+        @_was_suspending = true
 
 AnalogClock.onResume = =>
     @onShow! if @_was_suspending
