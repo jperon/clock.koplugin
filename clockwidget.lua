@@ -14,9 +14,8 @@ local date
 date = os.date
 local CACHE_DIR = DataStorage:getDataDir() .. "/cache/analogclock"
 local rotate_bb
-rotate_bb = function(bb, center_x, center_y, angle_rad)
-  local w, h = bb:getWidth(), bb:getHeight()
-  local rot_bb = Blitbuffer.new(w, h, bb:getType())
+rotate_bb = function(source, dest, center_x, center_y, angle_rad, only_color)
+  local w, h = source:getWidth(), source:getHeight()
   w, h = w - 1, h - 1
   local s, c = math.sin(angle_rad), math.cos(angle_rad)
   for x = 0, w do
@@ -25,20 +24,16 @@ rotate_bb = function(bb, center_x, center_y, angle_rad)
       local old_x = math.floor(center_x + (rel_x * c - rel_y * s) + 0.5)
       local old_y = math.floor(center_y + (rel_x * s + rel_y * c) + 0.5)
       if old_x >= 0 and old_x <= w and old_y >= 0 and old_y <= h then
-        rot_bb:setPixel(x, y, bb:getPixel(old_x, old_y))
+        local pixel = source:getPixel(old_x, old_y)
+        if (not only_color) or (pixel == only_color) then
+          dest:setPixel(x, y, pixel)
+        end
       end
     end
   end
-  return rot_bb
 end
-local merge_bb
-merge_bb = function(dest, source)
-  local w, h = source:getWidth(), source:getHeight()
-  return dest:pmulalphablitFrom(source, 0, 0, 0, 0, w, h)
-end
-local draw_minute_tick
-draw_minute_tick = function(size, is_hour)
-  local bb = Blitbuffer.new(size, size, Screen.bb:getType())
+local paint_minute_tick
+paint_minute_tick = function(size, dest_bb, is_hour)
   local center = size / 2
   local tick_length = is_hour and size / 16 or size / 24
   local tick_width = is_hour and size / 66 or size / 100
@@ -46,56 +41,31 @@ draw_minute_tick = function(size, is_hour)
   local y = math.floor(size * 0.05)
   local w = math.floor(tick_width)
   local h = math.floor(tick_length)
-  bb:paintRect(x, y, w, h, Blitbuffer.COLOR_WHITE)
-  return bb
-end
-local draw_hour_segment
-draw_hour_segment = function(size)
-  local center = size / 2
-  local angle = math.pi / 30
-  local bb = draw_minute_tick(size, true)
-  for i = 1, 4 do
-    local minute_bb = draw_minute_tick(size, false)
-    local rotated = rotate_bb(minute_bb, center, center, i * angle)
-    merge_bb(bb, rotated)
-    rotated:free()
-    minute_bb:free()
-  end
-  return bb
-end
-local draw_quarter
-draw_quarter = function(size)
-  local center = size / 2
-  local hour_angle = math.pi / 6
-  local bb_h = draw_hour_segment(size)
-  local bb_q = Blitbuffer.new(size, size, Screen.bb:getType())
-  merge_bb(bb_q, bb_h)
-  for i = 1, 2 do
-    local rotated = rotate_bb(bb_h, center, center, i * hour_angle)
-    merge_bb(bb_q, rotated)
-    rotated:free()
-  end
-  bb_h:free()
-  return bb_q
+  return dest_bb:paintRect(x, y, w, h, Blitbuffer.COLOR_BLACK)
 end
 local draw_face
 draw_face = function(size)
   local t0 = os.clock()
-  local bb_q = draw_quarter(size)
-  local bb_cadran = Blitbuffer.new(size, size, Screen.bb:getType())
-  for i = 0, 3 do
-    local temp = bb_q:rotatedCopy(i * 90)
-    merge_bb(bb_cadran, temp)
-    temp:free()
+  local bb = Blitbuffer.new(size, size, Screen.bb:getType())
+  bb:fill(Blitbuffer.COLOR_WHITE)
+  local center = size / 2
+  local hour_angle = math.pi / 6
+  local angle = math.pi / 30
+  paint_minute_tick(size, bb, false)
+  rotate_bb(bb, bb, center, center, angle, Blitbuffer.COLOR_BLACK)
+  rotate_bb(bb, bb, center, center, angle, Blitbuffer.COLOR_BLACK)
+  rotate_bb(bb, bb, center, center, 2 * angle, Blitbuffer.COLOR_BLACK)
+  paint_minute_tick(size, bb, true)
+  for hour = 1, 2 do
+    rotate_bb(bb, bb, center, center, hour * hour_angle, Blitbuffer.COLOR_BLACK)
   end
-  bb_q:free()
-  bb_cadran:invert()
-  local center = math.floor(size / 2)
+  rotate_bb(bb, bb, center, center, hour_angle * 3, Blitbuffer.COLOR_BLACK)
+  rotate_bb(bb, bb, center, center, hour_angle * 6, Blitbuffer.COLOR_BLACK)
   local radius = math.floor(size / 20)
-  bb_cadran:paintCircle(center, center, radius, Blitbuffer.COLOR_BLACK)
+  bb:paintCircle(center, center, radius, Blitbuffer.COLOR_BLACK)
   local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
   logger.dbg("ClockWidget: draw_face completed in", elapsed, "ms")
-  return bb_cadran
+  return bb
 end
 local draw_hand
 draw_hand = function(size, length_ratio, base_width_ratio, tip_width_ratio)
@@ -168,10 +138,16 @@ end
 local ClockWidget = WidgetContainer:new({
   padding = Size.padding.large,
   scale_factor = 0,
-  _hands = { }
+  _hands = { },
+  _display_hands = nil,
+  _prepare_hands = nil,
+  _last_prepared_minute = -1
 })
 ClockWidget.init = function(self)
   self._hands = { }
+  self._display_hands = nil
+  self._prepare_hands = nil
+  self._last_prepared_minute = -1
   return self:updateDimen(self.width, self.height)
 end
 ClockWidget.updateDimen = function(self, w, h)
@@ -191,12 +167,25 @@ ClockWidget.updateDimen = function(self, w, h)
     if self._minutes_hand_bb then
       self._minutes_hand_bb:free()
     end
+    if self._display_hands then
+      self._display_hands:free()
+    end
+    if self._prepare_hands then
+      self._prepare_hands:free()
+    end
     self._face_bb, self._hours_hand_bb, self._minutes_hand_bb = nil, nil, nil
+    self._display_hands, self._prepare_hands = nil, nil
     self._hands = { }
+    self._last_prepared_minute = -1
   end
   self._last_face_dim = self.face_dim
   logger.dbg("ClockWidget: Creating screen-sized BB:", self.width, "x", self.height)
   self._screen_bb = Blitbuffer.new(self.width, self.height, Screen.bb:getType())
+  self._display_hands = Blitbuffer.new(self.face_dim, self.face_dim, Screen.bb:getType())
+  self._prepare_hands = Blitbuffer.new(self.face_dim, self.face_dim, Screen.bb:getType())
+  self._display_hands:fill(Blitbuffer.COLOR_WHITE)
+  self._prepare_hands:fill(Blitbuffer.COLOR_WHITE)
+  self._last_prepared_minute = -1
   self.autoRefreshTime = function()
     UIManager:setDirty("all", function()
       return "ui", self.dimen, true
@@ -249,10 +238,14 @@ ClockWidget.paintTo = function(self, bb, x, y)
   local t_start = os.clock()
   self:_ensureBaseImages()
   local h, m = tonumber(date("%H")), tonumber(date("%M"))
-  local t0 = os.clock()
-  local hands = self._hands[60 * h + m] or self:_updateHands(h, m)
-  local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
-  logger.dbg("ClockWidget: paintTo updateHands took", elapsed, "ms")
+  local current_minute = 60 * h + m
+  if self._last_prepared_minute ~= current_minute then
+    local t0 = os.clock()
+    self:_prepareHands(h, m)
+    local elapsed = math.floor((os.clock() - t0) * 1000 + 0.5)
+    logger.dbg("ClockWidget: paintTo prepareHands took", elapsed, "ms")
+    self._last_prepared_minute = current_minute
+  end
   self._screen_bb:fill(Blitbuffer.COLOR_WHITE)
   local cx = math.floor((self.width - self.face_dim) / 2)
   local cy = math.floor((self.height - self.face_dim) / 2)
@@ -260,76 +253,48 @@ ClockWidget.paintTo = function(self, bb, x, y)
     local face_w, face_h = self._face_bb:getWidth(), self._face_bb:getHeight()
     self._screen_bb:blitFrom(self._face_bb, cx, cy, 0, 0, face_w, face_h)
   end
-  if hands and hands.hours_bb then
-    local hbb_w, hbb_h = hands.hours_bb:getWidth(), hands.hours_bb:getHeight()
+  if self._display_hands then
+    local hbb_w, hbb_h = self._display_hands:getWidth(), self._display_hands:getHeight()
     local hcx = cx + math.floor((self.face_dim - hbb_w) / 2)
     local hcy = cy + math.floor((self.face_dim - hbb_h) / 2)
-    self._screen_bb:pmulalphablitFrom(hands.hours_bb, hcx, hcy, 0, 0, hbb_w, hbb_h)
-  end
-  if hands and hands.minutes_bb then
-    local mbb_w, mbb_h = hands.minutes_bb:getWidth(), hands.minutes_bb:getHeight()
-    local mcx = cx + math.floor((self.face_dim - mbb_w) / 2)
-    local mcy = cy + math.floor((self.face_dim - mbb_h) / 2)
-    self._screen_bb:pmulalphablitFrom(hands.minutes_bb, mcx, mcy, 0, 0, mbb_w, mbb_h)
+    self._screen_bb:pmulalphablitFrom(self._display_hands, hcx, hcy, 0, 0, hbb_w, hbb_h)
   end
   bb:blitFrom(self._screen_bb, x, y, 0, 0, self.width, self.height)
   local total_elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
   return logger.dbg("ClockWidget: paintTo total time:", total_elapsed, "ms")
 end
 ClockWidget._prepareHands = function(self, hours, minutes)
-  local idx = hours * 60 + minutes
-  if self._hands[idx] then
-    return self._hands[idx]
-  end
   local t_start = os.clock()
   self:_ensureBaseImages()
-  if not (self._hours_hand_bb and self._minutes_hand_bb) then
-    return { }
+  if not (self._hours_hand_bb and self._minutes_hand_bb and self._face_bb) then
+    return 
   end
-  self._hands[idx] = { }
+  self._prepare_hands:blitFrom(self._face_bb, 0, 0, 0, 0, self.face_dim, self.face_dim)
   local hour_rad, minute_rad = -math.pi / 6, -math.pi / 30
+  local center = self.face_dim / 2
   local t0 = os.clock()
-  local hours_hand_bb = rotate_bb(self._hours_hand_bb, self._hours_hand_bb:getWidth() / 2, self._hours_hand_bb:getHeight() / 2, (hours + minutes / 60) * hour_rad)
+  rotate_bb(self._hours_hand_bb, self._prepare_hands, center, center, (hours + minutes / 60) * hour_rad, Blitbuffer.COLOR_BLACK)
   local elapsed_h = math.floor((os.clock() - t0) * 1000 + 0.5)
   t0 = os.clock()
-  local minutes_hand_bb = rotate_bb(self._minutes_hand_bb, self._minutes_hand_bb:getWidth() / 2, self._minutes_hand_bb:getHeight() / 2, minutes * minute_rad)
+  rotate_bb(self._minutes_hand_bb, self._prepare_hands, center, center, minutes * minute_rad, Blitbuffer.COLOR_BLACK)
   local elapsed_m = math.floor((os.clock() - t0) * 1000 + 0.5)
-  self._hands[idx].hours_bb = hours_hand_bb
-  self._hands[idx].minutes_bb = minutes_hand_bb
-  local n_hands = 0
-  for __ in pairs(self._hands) do
-    n_hands = n_hands + 1
-  end
   local total_elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
   logger.dbg("ClockWidget: _prepareHands for", hours, minutes, ": hours_rotate", elapsed_h, "ms, minutes_rotate", elapsed_m, "ms, total", total_elapsed, "ms")
-  logger.dbg("ClockWidget: hands ready:", n_hands, "position(s) in memory.")
-  return self._hands[idx]
+  self._display_hands, self._prepare_hands = self._prepare_hands, self._display_hands
 end
 ClockWidget._updateHands = function(self)
   local hours, minutes = tonumber(date("%H")), tonumber(date("%M"))
-  local floor, fmod
-  do
-    local _obj_0 = math
-    floor, fmod = _obj_0.floor, _obj_0.fmod
-  end
   local t_start = os.clock()
   logger.dbg("ClockWidget: _updateHands starting for", hours, ":", minutes)
+  self:_prepareHands(hours, minutes)
   UIManager:scheduleIn(50, function()
-    local idx = hours * 60 + minutes
-    for k in pairs(self._hands) do
-      if (idx < 24 * 60 - 2) and (k - idx < 0) or (k - idx > 2) then
-        self._hands[k] = nil
-      end
-    end
     local fut_minutes = minutes + 1
-    local fut_hours = fmod(hours + floor(fut_minutes / 60), 24)
-    fut_minutes = fmod(fut_minutes, 60)
+    local fut_hours = math.fmod(hours + math.floor(fut_minutes / 60), 24)
+    fut_minutes = math.fmod(fut_minutes, 60)
     return self:_prepareHands(fut_hours, fut_minutes)
   end)
-  local result = self:_prepareHands(hours, minutes)
   local elapsed = math.floor((os.clock() - t_start) * 1000 + 0.5)
-  logger.dbg("ClockWidget: _updateHands completed in", elapsed, "ms")
-  return result
+  return logger.dbg("ClockWidget: _updateHands completed in", elapsed, "ms")
 end
 ClockWidget.onShow = function(self)
   return self:autoRefreshTime()

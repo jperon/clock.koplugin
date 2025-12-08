@@ -15,9 +15,10 @@ import date from os
 -- Cache directory for dial image
 CACHE_DIR = DataStorage\getDataDir! .. "/cache/analogclock"
 
-rotate_bb = (bb, center_x, center_y, angle_rad) ->
-    w, h = bb\getWidth!, bb\getHeight!
-    rot_bb = Blitbuffer.new w, h, bb\getType!
+-- Rotate source BB and blit pixels into destination BB
+-- Can exclude a specific color (treated as transparent)
+rotate_bb = (source, dest, center_x, center_y, angle_rad, only_color) ->
+    w, h = source\getWidth!, source\getHeight!
     w, h = w - 1, h - 1
     s, c = math.sin(angle_rad), math.cos(angle_rad)
 
@@ -27,95 +28,64 @@ rotate_bb = (bb, center_x, center_y, angle_rad) ->
             old_x = math.floor(center_x + (rel_x * c - rel_y * s) + 0.5)
             old_y = math.floor(center_y + (rel_x * s + rel_y * c) + 0.5)
             if old_x >= 0 and old_x <= w and old_y >= 0 and old_y <= h
-                rot_bb\setPixel x, y, bb\getPixel(old_x, old_y)
-    rot_bb
+                pixel = source\getPixel(old_x, old_y)
+                -- Only set non-black pixels (ignore transparency)
+                if (not only_color) or (pixel == only_color)
+                    dest\setPixel x, y, pixel
 
--- Composite source onto dest using premultiplied alpha blitting
--- Black (0) is treated as transparent, non-black as opaque
-merge_bb = (dest, source) ->
-    w, h = source\getWidth!, source\getHeight!
-    dest\pmulalphablitFrom source, 0, 0, 0, 0, w, h
 
--- Draw a single minute tick at 12 o'clock position (INVERTED: white on black)
+-- Paint a single minute tick into destination BB at specified rotation angle
+-- Tick template is drawn at 12 o'clock then rotated into position
 -- If is_hour is true, draw a larger tick for hour markers
-draw_minute_tick = (size, is_hour) ->
-    bb = Blitbuffer.new size, size, Screen.bb\getType!
-    -- Leave black background (calloc default)
+paint_minute_tick = (size, dest_bb, is_hour) ->
     center = size / 2
 
     -- Tick dimensions - hour ticks are larger
     tick_length = is_hour and size / 16 or size / 24
     tick_width = is_hour and size / 66 or size / 100
 
-    -- Draw vertical tick at top center (12 o'clock) in WHITE
+    -- Draw vertical tick at top center (12 o'clock) in BLACK
     x = math.floor(center - tick_width / 2)
     y = math.floor(size * 0.05)  -- small margin from edge
     w = math.floor(tick_width)
     h = math.floor(tick_length)
 
-    bb\paintRect x, y, w, h, Blitbuffer.COLOR_WHITE
-    bb
+    -- Create temporary BB for tick template, then rotate into destination
+    dest_bb\paintRect x, y, w, h, Blitbuffer.COLOR_BLACK
 
--- Build one hour segment (5 minutes) by rotating minute ticks
--- First tick is an hour marker (larger), then 4 minute ticks
-draw_hour_segment = (size) ->
-    center = size / 2
-    angle = math.pi / 30  -- 6 degrees per minute
-
-    -- Start with hour marker at 12 o'clock
-    bb = draw_minute_tick size, true
-
-    -- Add 4 minute ticks via rotation (merge to accumulate white on black)
-    for i = 1, 4
-        minute_bb = draw_minute_tick size, false
-        rotated = rotate_bb minute_bb, center, center, i * angle
-        merge_bb bb, rotated
-        rotated\free!
-        minute_bb\free!
-
-    bb  -- contains 5 ticks: 1 hour + 4 minutes
-
--- Build quarter (3 hours = 15 minutes) by rotating hour segments
-draw_quarter = (size) ->
-    center = size / 2
-    hour_angle = math.pi / 6  -- 30 degrees per hour
-
-    bb_h = draw_hour_segment size
-    bb_q = Blitbuffer.new size, size, Screen.bb\getType!
-    -- Black background, merge to accumulate
-    merge_bb bb_q, bb_h
-
-    -- Add 2 more hour segments (for hours 1 and 2)
-    for i = 1, 2
-        rotated = rotate_bb bb_h, center, center, i * hour_angle
-        merge_bb bb_q, rotated
-        rotated\free!
-
-    bb_h\free!
-    bb_q  -- contains 15 ticks (3 hours)
-
--- Build full dial by using native rotatedCopy for 4 quadrants
+-- Build full dial by rotating hour segments directly into destination BB
 draw_face = (size) ->
     t0 = os.clock!
-    bb_q = draw_quarter size
-    bb_cadran = Blitbuffer.new size, size, Screen.bb\getType!
+    bb = Blitbuffer.new size, size, Screen.bb\getType!
+    bb\fill Blitbuffer.COLOR_WHITE
 
-    -- Copy 4 quadrants using native rotation (90° increments)
-    for i = 0, 3
-        temp = bb_q\rotatedCopy i * 90
-        merge_bb bb_cadran, temp
-        temp\free!
+    center = size / 2
+    hour_angle = math.pi / 6  -- 30 degrees per hour (2π/12)
 
-    bb_q\free!
-    -- Invert: white ticks on black -> black ticks on white
-    bb_cadran\invert!
+    -- Build all 12 hours by rotating hour segments in-place
+    -- Each hour segment has 4 minute ticks + 1 hour marker
+    angle = math.pi / 30  -- 6 degrees per minute
+
+    -- Add 4 minute ticks first (no hour marker yet)
+    paint_minute_tick size, bb, false
+    rotate_bb bb, bb, center, center, angle, Blitbuffer.COLOR_BLACK
+    rotate_bb bb, bb, center, center, angle, Blitbuffer.COLOR_BLACK
+    rotate_bb bb, bb, center, center, 2 * angle, Blitbuffer.COLOR_BLACK
+
+    -- Then add hour marker (larger tick) at the base angle
+    paint_minute_tick size, bb, true
+
+    -- Replicate for hours
+    rotate_bb bb, bb, center, center, hour * hour_angle, Blitbuffer.COLOR_BLACK for hour = 1, 2
+    rotate_bb bb, bb, center, center, hour_angle*3, Blitbuffer.COLOR_BLACK
+    rotate_bb bb, bb, center, center, hour_angle*6, Blitbuffer.COLOR_BLACK
+
     -- Draw center circle for aesthetics
-    center = math.floor(size / 2)
     radius = math.floor(size / 20)
-    bb_cadran\paintCircle center, center, radius, Blitbuffer.COLOR_BLACK
+    bb\paintCircle center, center, radius, Blitbuffer.COLOR_BLACK
     elapsed = math.floor((os.clock! - t0) * 1000 + 0.5)
     logger.dbg "ClockWidget: draw_face completed in", elapsed, "ms"
-    bb_cadran
+    bb
 
 -- Generic hand drawing function with trapezoid shape and rounded tip
 draw_hand = (size, length_ratio, base_width_ratio, tip_width_ratio) ->
@@ -193,10 +163,16 @@ load_dial_from_cache = (size) ->
 ClockWidget = WidgetContainer\new
     padding: Size.padding.large,
     scale_factor: 0,
-    _hands: {}
+    _hands: {},
+    _display_hands: nil,
+    _prepare_hands: nil,
+    _last_prepared_minute: -1
 
 ClockWidget.init = =>
     @_hands = {}
+    @_display_hands = nil
+    @_prepare_hands = nil
+    @_last_prepared_minute = -1
     @updateDimen @width, @height
 
 ClockWidget.updateDimen = (w, h) =>
@@ -210,13 +186,23 @@ ClockWidget.updateDimen = (w, h) =>
         @_face_bb\free! if @_face_bb
         @_hours_hand_bb\free! if @_hours_hand_bb
         @_minutes_hand_bb\free! if @_minutes_hand_bb
+        @_display_hands\free! if @_display_hands
+        @_prepare_hands\free! if @_prepare_hands
         @_face_bb, @_hours_hand_bb, @_minutes_hand_bb = nil, nil, nil
+        @_display_hands, @_prepare_hands = nil, nil
         @_hands = {}
+        @_last_prepared_minute = -1
     @_last_face_dim = @face_dim
 
-    -- Create a full-screen blitbuffer
+    -- Create full-screen blitbuffer and permanent hand buffers
     logger.dbg "ClockWidget: Creating screen-sized BB:", @width, "x", @height
     @_screen_bb = Blitbuffer.new @width, @height, Screen.bb\getType!
+    @_display_hands = Blitbuffer.new @face_dim, @face_dim, Screen.bb\getType!
+    @_prepare_hands = Blitbuffer.new @face_dim, @face_dim, Screen.bb\getType!
+    @_display_hands\fill Blitbuffer.COLOR_WHITE
+    @_prepare_hands\fill Blitbuffer.COLOR_WHITE
+    -- Force a hands preparation on next paint
+    @_last_prepared_minute = -1
 
     @autoRefreshTime = ->
         UIManager\setDirty "all", -> "ui", @dimen, true
@@ -274,10 +260,15 @@ ClockWidget.paintTo = (bb, x, y) =>
     @_ensureBaseImages!
 
     h, m = tonumber(date "%H"), tonumber(date "%M")
-    t0 = os.clock!
-    hands = @_hands[60 * h + m] or @_updateHands h, m
-    elapsed = math.floor((os.clock! - t0) * 1000 + 0.5)
-    logger.dbg "ClockWidget: paintTo updateHands took", elapsed, "ms"
+    current_minute = 60 * h + m
+
+    -- Prepare hands for next minute if needed (background work)
+    if @_last_prepared_minute != current_minute
+        t0 = os.clock!
+        @_prepareHands h, m
+        elapsed = math.floor((os.clock! - t0) * 1000 + 0.5)
+        logger.dbg "ClockWidget: paintTo prepareHands took", elapsed, "ms"
+        @_last_prepared_minute = current_minute
 
     -- Fill our screen BB with white
     @_screen_bb\fill Blitbuffer.COLOR_WHITE
@@ -291,19 +282,12 @@ ClockWidget.paintTo = (bb, x, y) =>
         face_w, face_h = @_face_bb\getWidth!, @_face_bb\getHeight!
         @_screen_bb\blitFrom @_face_bb, cx, cy, 0, 0, face_w, face_h
 
-    -- Blit hours hand onto screen BB
-    if hands and hands.hours_bb
-        hbb_w, hbb_h = hands.hours_bb\getWidth!, hands.hours_bb\getHeight!
+    -- Blit display hands onto screen BB
+    if @_display_hands
+        hbb_w, hbb_h = @_display_hands\getWidth!, @_display_hands\getHeight!
         hcx = cx + math.floor((@face_dim - hbb_w) / 2)
         hcy = cy + math.floor((@face_dim - hbb_h) / 2)
-        @_screen_bb\pmulalphablitFrom hands.hours_bb, hcx, hcy, 0, 0, hbb_w, hbb_h
-
-    -- Blit minutes hand onto screen BB
-    if hands and hands.minutes_bb
-        mbb_w, mbb_h = hands.minutes_bb\getWidth!, hands.minutes_bb\getHeight!
-        mcx = cx + math.floor((@face_dim - mbb_w) / 2)
-        mcy = cy + math.floor((@face_dim - mbb_h) / 2)
-        @_screen_bb\pmulalphablitFrom hands.minutes_bb, mcx, mcy, 0, 0, mbb_w, mbb_h
+        @_screen_bb\pmulalphablitFrom @_display_hands, hcx, hcy, 0, 0, hbb_w, hbb_h
 
     -- Finally, blit the entire screen BB to the actual screen
     bb\blitFrom @_screen_bb, x, y, 0, 0, @width, @height
@@ -311,64 +295,62 @@ ClockWidget.paintTo = (bb, x, y) =>
     logger.dbg "ClockWidget: paintTo total time:", total_elapsed, "ms"
 
 ClockWidget._prepareHands = (hours, minutes) =>
-    idx = hours * 60 + minutes
-    return @_hands[idx] if @_hands[idx]
-
     t_start = os.clock!
-    -- Ensure base images are loaded (may be called from scheduled callback)
+    -- Ensure base images are loaded
     @_ensureBaseImages!
-    return {} unless @_hours_hand_bb and @_minutes_hand_bb
+    return unless @_hours_hand_bb and @_minutes_hand_bb and @_face_bb
 
-    @_hands[idx] = {}
+    -- Start with dial background
+    @_prepare_hands\blitFrom @_face_bb, 0, 0, 0, 0, @face_dim, @face_dim
+
     hour_rad, minute_rad = -math.pi / 6, -math.pi / 30
+    center = @face_dim / 2
 
     t0 = os.clock!
-    hours_hand_bb = rotate_bb(
+    rotate_bb(
         @_hours_hand_bb,
-        @_hours_hand_bb\getWidth! / 2,
-        @_hours_hand_bb\getHeight! / 2,
-        (hours + minutes/60) * hour_rad
+        @_prepare_hands,
+        center,
+        center,
+        (hours + minutes/60) * hour_rad,
+        Blitbuffer.COLOR_BLACK
     )
     elapsed_h = math.floor((os.clock! - t0) * 1000 + 0.5)
 
     t0 = os.clock!
-    minutes_hand_bb = rotate_bb(
+    rotate_bb(
         @_minutes_hand_bb,
-        @_minutes_hand_bb\getWidth! / 2,
-        @_minutes_hand_bb\getHeight! / 2,
-        minutes * minute_rad
+        @_prepare_hands,
+        center,
+        center,
+        minutes * minute_rad,
+        Blitbuffer.COLOR_BLACK
     )
     elapsed_m = math.floor((os.clock! - t0) * 1000 + 0.5)
 
-    @_hands[idx].hours_bb = hours_hand_bb
-    @_hands[idx].minutes_bb = minutes_hand_bb
-
-    n_hands = 0
-    n_hands += 1 for __ in pairs @_hands
     total_elapsed = math.floor((os.clock! - t_start) * 1000 + 0.5)
     logger.dbg "ClockWidget: _prepareHands for", hours, minutes, ": hours_rotate", elapsed_h, "ms, minutes_rotate", elapsed_m, "ms, total", total_elapsed, "ms"
-    logger.dbg "ClockWidget: hands ready:", n_hands, "position(s) in memory."
-    @_hands[idx]
+
+    -- Swap buffers: prepare becomes display for next paint
+    @_display_hands, @_prepare_hands = @_prepare_hands, @_display_hands
 
 ClockWidget._updateHands = =>
     hours, minutes = tonumber(date "%H"), tonumber(date "%M")
-    {:floor, :fmod} = math
     t_start = os.clock!
     logger.dbg "ClockWidget: _updateHands starting for", hours, ":", minutes
-    -- Schedule removal of past minutes' hands, and creation of next one's.
+
+    -- Prepare hands immediately
+    @_prepareHands hours, minutes
+
+    -- Schedule preparation for next minute
     UIManager\scheduleIn 50, ->
-        idx = hours * 60 + minutes
-        for k in pairs @_hands
-            @_hands[k] = nil if (idx < 24 * 60 - 2) and (k - idx < 0) or (k - idx > 2)
         fut_minutes = minutes + 1
-        fut_hours = fmod hours + floor(fut_minutes / 60), 24
-        fut_minutes = fmod fut_minutes, 60
+        fut_hours = math.fmod(hours + math.floor(fut_minutes / 60), 24)
+        fut_minutes = math.fmod(fut_minutes, 60)
         @_prepareHands fut_hours, fut_minutes
-    -- Prepare this minute's hands at once (if necessary).
-    result = @_prepareHands hours, minutes
+
     elapsed = math.floor((os.clock! - t_start) * 1000 + 0.5)
     logger.dbg "ClockWidget: _updateHands completed in", elapsed, "ms"
-    result
 
 ClockWidget.onShow = => @autoRefreshTime!
 ClockWidget.onCloseWidget = => UIManager\unschedule @autoRefreshTime
