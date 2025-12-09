@@ -3,6 +3,9 @@ DataStorage = require("datastorage")
 Device = require("device")
 Geom = require("ui/geometry")
 lfs = require("libs/libkoreader-lfs")
+NetworkMgr = require("ui/network/manager")
+PluginShare = require("pluginshare")
+TextWidget = require("ui/widget/textwidget")
 UIManager = require("ui/uimanager")
 Screen = Device.screen
 Size = require("ui/size")
@@ -14,6 +17,48 @@ import date from os
 
 -- Cache directory for dial image
 CACHE_DIR = DataStorage\getDataDir! .. "/cache/analogclock"
+
+-- Pause auto-suspend (keep device awake while clock is displayed)
+pauseAutoSuspend = ->
+    if Device\isCervantes! or Device\isKobo!
+        PluginShare.pause_auto_suspend = true
+    elseif Device\isKindle!
+        os.execute"lipc-set-prop com.lab126.powerd preventScreenSaver 1"
+    else
+        logger.warn"ClockWidget: pause suspend not supported on this device"
+
+-- Resume auto-suspend (restore previous sleep behavior)
+startAutoSuspend = ->
+    if Device\isCervantes! or Device\isKobo!
+        PluginShare.pause_auto_suspend = false
+    elseif Device\isKindle!
+        os.execute"lipc-set-prop com.lab126.powerd preventScreenSaver 0"
+    else
+        logger.warn"ClockWidget: resume suspend not supported on this device"
+
+-- Draw status icons (wifi, battery) in bottom right corner using UTF-8
+draw_status_icons = (bb, x, y, width, height, font_face) ->
+    icon_size = math.floor(height * 0.08)
+    padding = math.floor(icon_size * 0.5)
+    current_x = x + width - padding - icon_size * 2
+    icon_y = y + height - padding - icon_size
+
+    if Device\hasWifiToggle! and NetworkMgr\isWifiOn!
+        wifi_widget = TextWidget\new text: "≈", face: font_face
+        wifi_widget\paintTo bb, current_x, icon_y
+        current_x -= icon_size + padding
+
+    powerd = Device\getPowerDevice!
+    if powerd and Device\hasBattery!
+        if powerd\isCharging!
+            charging_widget = TextWidget\new text: "⚡", face: font_face
+            charging_widget\paintTo bb, current_x, icon_y
+            current_x -= icon_size + padding
+
+        batt_level = powerd\getCapacity!
+        if batt_level < 30
+            battery_widget = TextWidget\new text: "⚠", face: font_face
+            battery_widget\paintTo bb, current_x, icon_y
 
 -- Rotate source BB and blit pixels into destination BB
 -- Can exclude a specific color (treated as transparent)
@@ -174,6 +219,8 @@ ClockWidget.init = =>
     @_prepare_hands = nil
     @_last_prepared_minute = -1
     @updateDimen @width, @height
+    -- Pause auto-suspend when clock is initialized
+    pauseAutoSuspend!
 
 ClockWidget.updateDimen = (w, h) =>
     @width, @height = w, h
@@ -289,6 +336,11 @@ ClockWidget.paintTo = (bb, x, y) =>
         hcy = cy + math.floor((@face_dim - hbb_h) / 2)
         @_screen_bb\pmulalphablitFrom @_display_hands, hcx, hcy, 0, 0, hbb_w, hbb_h
 
+    -- Draw status icons in bottom right corner
+    Font = require("ui/font")
+    icon_font = Font\getFace("cfont", 32)
+    draw_status_icons @_screen_bb, x, y, @width, @height, icon_font
+
     -- Finally, blit the entire screen BB to the actual screen
     bb\blitFrom @_screen_bb, x, y, 0, 0, @width, @height
     total_elapsed = math.floor((os.clock! - t_start) * 1000 + 0.5)
@@ -353,7 +405,9 @@ ClockWidget._updateHands = =>
     logger.dbg "ClockWidget: _updateHands completed in", elapsed, "ms"
 
 ClockWidget.onShow = => @autoRefreshTime!
-ClockWidget.onCloseWidget = => UIManager\unschedule @autoRefreshTime
+ClockWidget.onCloseWidget = =>
+    UIManager\unschedule @autoRefreshTime
+    startAutoSuspend!
 ClockWidget.onSuspend = => UIManager\unschedule @autoRefreshTime
 ClockWidget.onResume = => @autoRefreshTime!
 
